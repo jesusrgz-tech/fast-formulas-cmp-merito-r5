@@ -53,6 +53,7 @@ DEFAULT FOR PER_ASG_JOB_MANAGER_LEVEL IS 'NA'
 DEFAULT FOR PER_ASG_GRADE_ID IS 123
 DEFAULT FOR PER_ASG_PERSON_ID IS 0
 DEFAULT FOR CMP_ASSIGNMENT_SALARY_AMOUNT IS 0
+DEFAULT FOR PER_ASG_REL_ORIGINAL_DATE_OF_HIRE IS '1901/01/01' (date)
 
 /*============================================================================
   FECHAS BASE
@@ -69,17 +70,13 @@ l_log = SET_LOG('Assignment ID: ' || TO_CHAR(L_ASG_ID))
   Se obtiene el incremento promedio desde GB_INCREMENTO_MERITO_V2
   para la clave BR
 ============================================================================*/
-L_PROM = TO_NUM(GET_TABLE_VALUE('GB_CMP_BR_INCREMENTO_MERITO', 'Incremento_Legal', 'BR'))
+L_PROM = TO_NUM(GET_TABLE_VALUE('GB_CMP_BR_INCREMENTO_MERITO', 'Incremento_Promedio', 'BR'))
 l_log = SET_LOG('Promedio BR: ' || TO_CHAR(L_PROM))
 
 /*============================================================================
   INCREMENTO LEGAL BR
-  Se obtiene desde GB_INCREMENTO_MERITO_V2, columna Incremento_Legal
-  (antes Inflacion_Minima). Se calculan tambien los umbrales de
-  comparacion Minimo Rango 1 y Mitad de Incremento Promedio, mismo
-  patron ya validado en GB_CMP_INCRM_MERITO_RANGO_R1.
 ============================================================================*/
-L_INCR_LEGAL = TO_NUM(GET_TABLE_VALUE('GB_CMP_BR_INCREMENTO_MERITO', 'Incremento_Promedio', 'BR'))
+L_INCR_LEGAL = TO_NUM(GET_TABLE_VALUE('GB_CMP_BR_INCREMENTO_MERITO', 'Incremento_Legal', 'BR'))
 l_log = SET_LOG('Incremento Legal BR: ' || TO_CHAR(L_INCR_LEGAL))
 
 IF L_PROM > 10 THEN
@@ -143,6 +140,7 @@ CHANGE_CONTEXTS(EFFECTIVE_DATE = HR_EXTRACT_DATE)
     MGR_LVL            = PER_ASG_JOB_MANAGER_LEVEL
     ASSIGN_START_DATE  = PER_ASG_EFFECTIVE_START_DATE
     ASSIGN_END_DATE    = PER_ASG_EFFECTIVE_END_DATE
+    L_ORIG_HIRE_DATE   = PER_ASG_REL_ORIGINAL_DATE_OF_HIRE
 )
 
 l_log = SET_LOG('Tipo contrato: ' || L_TIPO_CONTRATO)
@@ -151,6 +149,7 @@ l_log = SET_LOG('Hire Date: '     || TO_CHAR(L_HIRE_DATE, 'YYYY/MM/DD'))
 l_log = SET_LOG('Grade ID: '      || TO_CHAR(L_GRADE))
 l_log = SET_LOG('Sueldo: '        || TO_CHAR(L_SUELDO))
 l_log = SET_LOG('Manager Level actual: ' || MGR_LVL)
+l_log = SET_LOG('Original Date of Hire: ' || TO_CHAR(L_ORIG_HIRE_DATE, 'YYYY/MM/DD'))
 
 /*============================================================================
   CALCULO APERTURA
@@ -262,7 +261,7 @@ L_CINCO_MESES = ADD_MONTHS(L_PL_END_DATE, -5)
 
 IF PRO = 'PRO' THEN
     L_CONDICION = 'Promotion'
-ELSE IF L_HIRE_DATE >= L_CINCO_MESES AND (L_ACTION = 'HIRE' OR L_ACTION = 'ADD_ASSIGN') THEN
+ELSE IF L_ORIG_HIRE_DATE >= L_CINCO_MESES THEN
     L_CONDICION = 'NewHire'
 ELSE IF L_TIPO_CONTRATO = '2' THEN
     L_CONDICION = 'NonPerm'
@@ -279,15 +278,13 @@ l_log = SET_LOG('Condicion: ' || L_CONDICION)
   sufijan L_CLAVE con el resultado. Promotion y Salida quedan planas,
   sin comparacion.
 ============================================================================*/
-IF L_CONDICION = 'Promotion' AND (L_EVAL_TXT = 'Sobresaliente' OR L_EVAL_TXT = 'N/A') THEN
+IF L_CONDICION = 'Promotion' AND L_EVAL_TXT = 'Sobresaliente' THEN
     L_CLAVE = 'Sobresaliente_PROM'
-ELSE IF L_CONDICION = 'Promotion' AND (L_EVAL_TXT = 'Supera' OR L_EVAL_TXT = 'N/A') THEN 
+ELSE IF L_CONDICION = 'Promotion' AND L_EVAL_TXT = 'Supera' THEN 
     L_CLAVE = 'Supera_PROM'
-ELSE IF L_CONDICION = 'Promotion' AND (L_EVAL_TXT = 'Cumple con lo esperado' OR L_EVAL_TXT = 'N/A') THEN 
+ELSE IF L_CONDICION = 'Promotion' AND L_EVAL_TXT = 'Cumple con lo esperado' THEN 
     L_CLAVE = 'Cumple con lo esperado_PROM'
 ELSE IF L_CONDICION = 'Promotion' THEN 
-    L_CLAVE = 'Promotion'
-ELSE IF L_CONDICION = 'Promotion' AND L_EVAL_TXT = 'N/A' THEN 
     L_CLAVE = 'Promotion'
 ELSE IF L_CONDICION = 'NonPerm' THEN
 (
@@ -327,7 +324,9 @@ ELSE IF L_EVAL_TXT = 'Por debajo de lo esperado' THEN
         L_CLAVE = 'Por debajo de lo esperado_LT_MITADPROM'
 )
 ELSE IF L_EVAL_TXT = 'Sobresaliente' AND L_APERTURA <= 100 THEN
+(
     L_CLAVE = 'Sobresaliente_LT100'
+)
 ELSE IF L_EVAL_TXT = 'Sobresaliente' AND L_APERTURA > 100 THEN
 (
     IF L_INCR_LEGAL > L_MIN_R1 THEN
@@ -350,11 +349,21 @@ ELSE IF L_EVAL_TXT = 'Cumple con lo esperado' AND L_APERTURA > 100 THEN
         L_CLAVE = 'Cumple con lo esperado_GE100_LT_MINR1'
 )
 ELSE IF L_EVAL_TXT = 'Supera' AND L_APERTURA <= 100 THEN
-    L_CLAVE = 'Supera_LT100'
+(
+    IF L_INCR_LEGAL > L_MIN_R1 THEN
+        L_CLAVE = 'Supera_LT100_GE_MINR1'
+    ELSE
+        L_CLAVE = 'Supera_LT100_LT_MINR1'
+)
 ELSE IF L_EVAL_TXT = 'Supera' AND L_APERTURA > 100 THEN
-    L_CLAVE = 'Supera_GE100'
+(
+    IF L_INCR_LEGAL > L_MIN_R1 THEN
+        L_CLAVE = 'Supera_GE100_GE_MINR1'
+    ELSE
+        L_CLAVE = 'Supera_GE100_LT_MINR1'
+)
 ELSE
-    L_CLAVE = 'SinClasificar n/a'
+    L_CLAVE = 'SinClasificar'
 
 l_log = SET_LOG('Clave UDT: ' || L_CLAVE)
 

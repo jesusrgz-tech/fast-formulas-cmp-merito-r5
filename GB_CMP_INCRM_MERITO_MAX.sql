@@ -45,6 +45,7 @@ DEFAULT FOR PER_ASG_JOB_MANAGER_LEVEL IS 'NA'
 DEFAULT FOR PER_ASG_GRADE_ID IS 123
 DEFAULT FOR PER_ASG_PERSON_ID IS 0
 DEFAULT FOR CMP_ASSIGNMENT_SALARY_AMOUNT IS 0
+DEFAULT FOR PER_ASG_REL_ORIGINAL_DATE_OF_HIRE IS '1901/01/01' (date)
 
 /*============================================================================
   FECHAS BASE
@@ -58,10 +59,6 @@ l_log = SET_LOG('Assignment ID: ' || TO_CHAR(L_ASG_ID))
 
 /*============================================================================
   PROMEDIO E INCREMENTO LEGAL BR
-  Se obtiene el incremento promedio y el incremento legal desde la UDT
-  GB_CMP_BR_INCREMENTO_MERITO para la clave BR. Se calculan tambien los
-  umbrales de comparacion Minimo Rango 1 y Mitad de Incremento Promedio,
-  mismo patron ya validado en GB_CMP_INCRM_MERITO_RANGO_R1 (Colombia).
 ============================================================================*/
 L_PROM       = TO_NUMBER(GET_TABLE_VALUE('GB_CMP_BR_INCREMENTO_MERITO', 'Incremento_Promedio', 'BR'))
 L_INCR_LEGAL = TO_NUMBER(GET_TABLE_VALUE('GB_CMP_BR_INCREMENTO_MERITO', 'Incremento_Legal', 'BR'))
@@ -128,6 +125,7 @@ CHANGE_CONTEXTS(EFFECTIVE_DATE = HR_EXTRACT_DATE)
     MGR_LVL            = PER_ASG_JOB_MANAGER_LEVEL
     ASSIGN_START_DATE  = PER_ASG_EFFECTIVE_START_DATE
     ASSIGN_END_DATE    = PER_ASG_EFFECTIVE_END_DATE
+    L_ORIG_HIRE_DATE   = PER_ASG_REL_ORIGINAL_DATE_OF_HIRE
 )
 
 l_log = SET_LOG('Tipo contrato: ' || L_TIPO_CONTRATO)
@@ -136,7 +134,7 @@ l_log = SET_LOG('Hire Date: '     || TO_CHAR(L_HIRE_DATE, 'YYYY/MM/DD'))
 l_log = SET_LOG('Grade ID: '      || TO_CHAR(L_GRADE))
 l_log = SET_LOG('Sueldo: '        || TO_CHAR(L_SUELDO))
 l_log = SET_LOG('Manager Level Actual : ' || MGR_LVL)
-
+l_log = SET_LOG('Original Hire Date: ' || TO_CHAR(L_ORIG_HIRE_DATE, 'YYYY/MM/DD'))
 /*============================================================================
   CALCULO APERTURA
   Se obtienen min y max del plan salarial via Value Sets y se calcula
@@ -250,7 +248,7 @@ L_CINCO_MESES = ADD_MONTHS(L_PL_END_DATE, -5)
 
 IF PRO = 'PRO' THEN
     L_CONDICION = 'Promotion'
-ELSE IF L_HIRE_DATE >= L_CINCO_MESES AND (L_ACTION = 'HIRE' OR L_ACTION = 'ADD_ASSIGN') THEN
+ELSE IF L_ORIG_HIRE_DATE >= L_CINCO_MESES THEN 
     L_CONDICION = 'NewHire'
 ELSE IF L_TIPO_CONTRATO = '2' THEN
     L_CONDICION = 'NonPerm'
@@ -267,15 +265,13 @@ l_log = SET_LOG('Condicion: ' || L_CONDICION)
   sufijan L_CLAVE con el resultado. Debe coincidir exactamente con la
   clave construida en GB_CMP_INCRM_MERITO_RANGO y GB_CMP_INCRM_MERITO_MIN.
 ============================================================================*/
-IF L_CONDICION = 'Promotion' AND (L_EVAL_TXT = 'Sobresaliente' OR L_EVAL_TXT = 'N/A') THEN
+IF L_CONDICION = 'Promotion' AND L_EVAL_TXT = 'Sobresaliente' THEN
     L_CLAVE = 'Sobresaliente_PROM'
-ELSE IF L_CONDICION = 'Promotion' AND (L_EVAL_TXT = 'Supera' OR L_EVAL_TXT = 'N/A') THEN 
+ELSE IF L_CONDICION = 'Promotion' AND L_EVAL_TXT = 'Supera' THEN 
     L_CLAVE = 'Supera_PROM'
-ELSE IF L_CONDICION = 'Promotion' AND (L_EVAL_TXT = 'Cumple con lo esperado' OR L_EVAL_TXT = 'N/A') THEN 
+ELSE IF L_CONDICION = 'Promotion' AND L_EVAL_TXT = 'Cumple con lo esperado' THEN 
     L_CLAVE = 'Cumple con lo esperado_PROM'
 ELSE IF L_CONDICION = 'Promotion' THEN 
-    L_CLAVE = 'Promotion'
-ELSE IF L_CONDICION = 'Promotion' AND L_EVAL_TXT = 'N/A' THEN 
     L_CLAVE = 'Promotion'
 ELSE IF L_CONDICION = 'NonPerm' THEN
 (
@@ -315,7 +311,12 @@ ELSE IF L_EVAL_TXT = 'Por debajo de lo esperado' THEN
         L_CLAVE = 'Por debajo de lo esperado_LT_MITADPROM'
 )
 ELSE IF L_EVAL_TXT = 'Sobresaliente' AND L_APERTURA <= 100 THEN
-    L_CLAVE = 'Sobresaliente_LT100'
+(
+    IF L_INCR_LEGAL > L_MIN_R1 THEN
+        L_CLAVE = 'Sobresaliente_LT100_GE_MINR1'
+    ELSE
+        L_CLAVE = 'Sobresaliente_LT100_LT_MINR1'
+)
 ELSE IF L_EVAL_TXT = 'Sobresaliente' AND L_APERTURA > 100 THEN
 (
     IF L_INCR_LEGAL > L_MIN_R1 THEN
@@ -338,11 +339,21 @@ ELSE IF L_EVAL_TXT = 'Cumple con lo esperado' AND L_APERTURA > 100 THEN
         L_CLAVE = 'Cumple con lo esperado_GE100_LT_MINR1'
 )
 ELSE IF L_EVAL_TXT = 'Supera' AND L_APERTURA <= 100 THEN
-    L_CLAVE = 'Supera_LT100'
+(
+    IF L_INCR_LEGAL > L_MIN_R1 THEN
+        L_CLAVE = 'Supera_LT100_GE_MINR1'
+    ELSE
+        L_CLAVE = 'Supera_LT100_LT_MINR1'
+)
 ELSE IF L_EVAL_TXT = 'Supera' AND L_APERTURA > 100 THEN
-    L_CLAVE = 'Supera_GE100'
+(
+    IF L_INCR_LEGAL > L_MIN_R1 THEN
+        L_CLAVE = 'Supera_GE100_GE_MINR1'
+    ELSE
+        L_CLAVE = 'Supera_GE100_LT_MINR1'
+)
 ELSE
-    L_CLAVE = 'SinClasificar n/a'
+    L_CLAVE = 'SinClasificar'
 
 l_log = SET_LOG('Clave UDT: ' || L_CLAVE)
 
@@ -361,48 +372,46 @@ l_log = SET_LOG('Rango Max: ' || L_RANGO_MAX)
 IF L_PROM > 10 THEN
 (
     L_VAL_R1_MIN = L_PROM - 3
+    L_VAL_R1_MAX = L_PROM - 1.5
     L_VAL_R2_MIN = L_PROM - 1.5
+    L_VAL_R2_MAX = L_PROM
     L_VAL_R3_MIN = L_PROM
+    L_VAL_R3_MAX = L_PROM + 1.5
     L_VAL_R4_MIN = L_PROM + 1.5
-    L_VAL_R1 = L_PROM - 1.5
-    L_VAL_R2 = L_PROM
-    L_VAL_R3 = L_PROM + 1.5
-    L_VAL_R4 = L_PROM + 3
     L_VAL_R4_MAX = L_PROM + 3
 )
 ELSE IF L_PROM >= 5 AND L_PROM <= 10 THEN
 (
     L_VAL_R1_MIN = L_PROM * 0.70
+    L_VAL_R1_MAX = L_PROM * 0.85
     L_VAL_R2_MIN = L_PROM * 0.85
+    L_VAL_R2_MAX = L_PROM
     L_VAL_R3_MIN = L_PROM
+    L_VAL_R3_MAX = L_PROM * 1.15
     L_VAL_R4_MIN = L_PROM * 1.15
-    L_VAL_R1 = L_PROM * 0.85
-    L_VAL_R2 = L_PROM
-    L_VAL_R3 = L_PROM * 1.15
-    L_VAL_R4 = L_PROM * 1.30
     L_VAL_R4_MAX = L_PROM * 1.30
 )
 ELSE
 (
     L_VAL_R1_MIN = L_PROM - 1.5
+    L_VAL_R1_MAX = L_PROM - 0.75
     L_VAL_R2_MIN = L_PROM - 0.75
+    L_VAL_R2_MAX = L_PROM
     L_VAL_R3_MIN = L_PROM
+    L_VAL_R3_MAX = L_PROM + 0.75
     L_VAL_R4_MIN = L_PROM + 0.75
-    L_VAL_R1 = L_PROM - 0.75
-    L_VAL_R2 = L_PROM
-    L_VAL_R3 = L_PROM + 0.75
-    L_VAL_R4 = L_PROM + 1.5
     L_VAL_R4_MAX = L_PROM + 1.5
 )
 
-l_log = SET_LOG('Val R1: ' || TO_CHAR(L_VAL_R1))
-l_log = SET_LOG('Val R2: ' || TO_CHAR(L_VAL_R2))
-l_log = SET_LOG('Val R3: ' || TO_CHAR(L_VAL_R3))
-l_log = SET_LOG('Val R4: ' || TO_CHAR(L_VAL_R4))
 l_log = SET_LOG('Val R1_MIN: ' || TO_CHAR(L_VAL_R1_MIN))
+l_log = SET_LOG('Val R1_MAX: ' || TO_CHAR(L_VAL_R1_MAX))
 l_log = SET_LOG('Val R2_MIN: ' || TO_CHAR(L_VAL_R2_MIN))
+l_log = SET_LOG('Val R2_MAX: ' || TO_CHAR(L_VAL_R2_MAX))
 l_log = SET_LOG('Val R3_MIN: ' || TO_CHAR(L_VAL_R3_MIN))
+l_log = SET_LOG('Val R3_MAX: ' || TO_CHAR(L_VAL_R3_MAX))
 l_log = SET_LOG('Val R4_MIN: ' || TO_CHAR(L_VAL_R4_MIN))
+l_log = SET_LOG('Val R4_MAX: ' || TO_CHAR(L_VAL_R4_MAX))
+
 /*============================================================================
   RESOLUCION NUMERICA MINIMO
   Se traduce el indicador Rango_Min a su valor numerico correspondiente
@@ -412,21 +421,21 @@ IF L_RANGO_MAX = 'NO' THEN
 ELSE IF L_RANGO_MAX = 'R0_MIN' THEN
     L_DEFAULT_MAX = 0
 ELSE IF L_RANGO_MAX = 'R0_MAX' THEN
-    L_DEFAULT_MAX = L_VAL_R1
+    L_DEFAULT_MAX = L_VAL_R1_MIN
 ELSE IF L_RANGO_MAX = 'R1_MIN' OR L_RANGO_MAX = 'R1' THEN
-    L_DEFAULT_MAX = L_VAL_R1
+    L_DEFAULT_MAX = L_VAL_R1_MIN
 ELSE IF L_RANGO_MAX = 'R1_MAX' THEN
-    L_DEFAULT_MAX = L_VAL_R2
+    L_DEFAULT_MAX = L_VAL_R1_MAX
 ELSE IF L_RANGO_MAX = 'R2_MIN' OR L_RANGO_MAX = 'R2' THEN
-    L_DEFAULT_MAX = L_VAL_R2
+    L_DEFAULT_MAX = L_VAL_R2_MIN
 ELSE IF L_RANGO_MAX = 'R2_MAX' THEN
-    L_DEFAULT_MAX = L_VAL_R2
+    L_DEFAULT_MAX = L_VAL_R2_MAX
 ELSE IF L_RANGO_MAX = 'R3_MIN' OR L_RANGO_MAX = 'R3' THEN
-    L_DEFAULT_MAX = L_VAL_R3
+    L_DEFAULT_MAX = L_VAL_R3_MIN
 ELSE IF L_RANGO_MAX = 'R3_MAX' THEN
-    L_DEFAULT_MAX = L_VAL_R3
+    L_DEFAULT_MAX = L_VAL_R3_MAX
 ELSE IF L_RANGO_MAX = 'R4_MIN' OR L_RANGO_MAX = 'R4' THEN
-    L_DEFAULT_MAX = L_VAL_R4
+    L_DEFAULT_MAX = L_VAL_R4_MIN
 ELSE IF L_RANGO_MAX = 'R4_MAX' THEN
     L_DEFAULT_MAX = L_VAL_R4_MAX
 ELSE IF L_RANGO_MAX = 'PROM' THEN
